@@ -264,8 +264,7 @@ func Promisify(fn interface{}) interface{} {
 	return func(args ...interface{}) *js.Object {
 		var p Promise
 		go func() {
-			// TODO(aroman) Attempt to convert all args to the parameter type.
-			results := f.Call(reflectAll(args...))
+			results := f.Call(reflectAll(f.Type(), args...))
 			value, err := splitResults(results, hasLastError(f.Type()))
 			if err == nil {
 				p.Resolve(value)
@@ -279,10 +278,34 @@ func Promisify(fn interface{}) interface{} {
 
 var errorType = reflect.ValueOf((*error)(nil)).Type().Elem()
 
-func reflectAll(args ...interface{}) []reflect.Value {
+func makeConcrete(val interface{}) reflect.Value {
+	switch v := val.(type) {
+	case float64, uint8:
+		return reflect.ValueOf(v)
+	default:
+		panic("makeConcrete")
+	}
+}
+
+func reflectAll(functionType reflect.Type, args ...interface{}) []reflect.Value {
 	reflected := make([]reflect.Value, len(args))
 	for i := range args {
-		reflected[i] = reflect.ValueOf(args[i])
+		val := reflect.ValueOf(args[i])
+		// Convert to target param type. This is an incomplete list, extend as needed.
+		targetType := functionType.In(i)
+		switch val.Kind() {
+		case reflect.Float64:
+			val = val.Convert(targetType)
+		case reflect.Slice:
+			// Convert e.g. []interface{} to []uint32, etc.
+			targetElemType := targetType.Elem()
+			ret := reflect.MakeSlice(targetType, val.Len(), val.Len())
+			for j := 0; j < val.Len(); j++ {
+				ret.Index(j).Set(makeConcrete(val.Index(j).Interface()).Convert(targetElemType))
+			}
+			val = ret
+		}
+		reflected[i] = val
 	}
 	return reflected
 }
